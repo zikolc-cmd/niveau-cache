@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Niveau Caché">
+<meta name="theme-color" content="#06060e">
+<title>Ziko — Le Niveau Caché</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root { --vert:#5cff96; --rouge:#ff4a5a; --fond:#06060e; --texte:#e6e6ee; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; -webkit-user-select:none; }
+  html,body { margin:0; height:100%; background:var(--fond); color:var(--texte); font-family: ui-monospace, Menlo, monospace; overflow:hidden; touch-action:none; }
+  #jeu { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { image-rendering:pixelated; image-rendering:crisp-edges; max-width:100vw; max-height:100vh; }
+  .ecran { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:24px; text-align:center; background:rgba(6,6,14,.96); transition:opacity .35s; z-index:5; }
+  .cache { opacity:0; pointer-events:none; }
+  h1 { font-size:clamp(26px,7vw,52px); margin:0; letter-spacing:.04em; }
+  .petit { font-size:13px; opacity:.65; max-width:440px; line-height:1.5; }
+  .vert { color:var(--vert); } .rouge { color:var(--rouge); }
+  input { font:inherit; font-size:24px; text-align:center; letter-spacing:.3em; text-transform:uppercase; width:min(320px,80vw); padding:12px; border-radius:12px; border:2px solid #333; background:#111; color:var(--vert); outline:none; user-select:text; -webkit-user-select:text; }
+  input:focus { border-color:var(--vert); }
+  button.gros { font:inherit; font-size:18px; font-weight:800; padding:14px 30px; border-radius:14px; border:0; background:var(--vert); color:#000; cursor:pointer; }
+  button.lien { font:inherit; font-size:14px; background:none; border:1px solid #444; color:var(--texte); padding:10px 18px; border-radius:10px; }
+  #msg { min-height:22px; font-size:15px; }
+  #touches { position:fixed; left:0; right:0; bottom:0; display:flex; justify-content:space-between; padding:0 max(18px, env(safe-area-inset-left)) max(18px, env(safe-area-inset-bottom)); pointer-events:none; z-index:4; }
+  #touches div { display:flex; gap:14px; }
+  .t { width:74px; height:74px; border-radius:50%; background:rgba(255,255,255,.12); border:2px solid rgba(255,255,255,.18); display:flex; align-items:center; justify-content:center; font-size:30px; pointer-events:auto; color:#fff; }
+  .t.on { background:rgba(92,255,150,.35); }
+  @media (hover:hover) and (pointer:fine) { #touches { display:none; } }
+  #hud { position:fixed; top:max(10px, env(safe-area-inset-top)); left:16px; right:16px; display:flex; justify-content:space-between; font-size:14px; z-index:3; pointer-events:none; opacity:.85; }
+  a { color:var(--vert); }
+</style>
+</head>
+<body>
+<div id="jeu"><canvas id="c" width="512" height="288"></canvas></div>
+<div id="hud"><span id="hudNiveau"></span><span id="hudMorts"></span></div>
+<div id="touches">
+  <div><div class="t" id="tg">◀</div><div class="t" id="td">▶</div></div>
+  <div><div class="t" id="ts">▲</div></div>
+</div>
+
+<!-- Écran 1 : le verrou. Le code se trouve dans le livre. -->
+<div class="ecran" id="verrou">
+  <div class="petit vert">ACCÈS RESTREINT — NIVEAU NON RÉPERTORIÉ</div>
+  <h1>LE NIVEAU CACHÉ</h1>
+  <div class="petit">Ce niveau n'existe dans aucun jeu.<br>Seuls ceux qui ont résolu l'énigme du livre connaissent le code.</div>
+  <input id="code" maxlength="24" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false">
+  <button class="gros" id="valider">ENTRER</button>
+  <div id="msg"></div>
+</div>
+
+<!-- Écran 2 : la fin -->
+<div class="ecran cache" id="fin">
+  <div class="petit vert">NIVEAU CACHÉ : TERMINÉ</div>
+  <h1>Le Concepteur<br>te regarde.</h1>
+  <div class="petit" id="finTexte"></div>
+  <button class="lien" onclick="window.open('https://apps.apple.com/app/id6825785271','_blank')">Ziko Troll 3 sur l'App Store</button>
+  <button class="lien" onclick="window.open('https://apps.apple.com/app/id6825733297','_blank')">Ziko Troll 2 sur l'App Store</button>
+  <button class="gros" id="rejouer">REJOUER</button>
+</div>
+
+<script>
+/* ============================================================
+   ZIKO — LE NIVEAU CACHÉ
+   Mini-jeu secret lié au livre. Un seul fichier, aucun serveur.
+   Le code d'accès n'est PAS écrit en clair : on compare son empreinte SHA-256.
+   Pour changer le code : remplace EMPREINTE par le SHA-256 du nouveau code (en MAJUSCULES, sans espaces).
+   ============================================================ */
+const EMPREINTE = "3eb6950f8277fd9c2adca1645818e882aa40d7721f2ae5bf8ffbc2e2174fc73a"; // code actuel : celui trouvé dans le livre
+
+const $ = id => document.getElementById(id);
+const sauver = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+const lire = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } };
+
+async function sha256(t) {
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
+  return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+const trollsCode = [
+  "Faux. Mais c'était bien essayé.", "Toujours faux. Le livre ment parfois, toi aussi.",
+  "Non. Relis le dernier chapitre.", "Le Concepteur a noté ta tentative.", "Presque. (Non.)",
+];
+let essais = 0;
+async function verifier() {
+  const c = $('code').value.trim().toUpperCase().replace(/\s+/g, '');
+  if (!c) return;
+  const h = await sha256(c);
+  if (h === window.EMPREINTE_ACTIVE) {
+    sauver('zk_ok', true);
+    $('verrou').classList.add('cache');
+    demarrer();
+  } else {
+    $('msg').innerHTML = '<span class="rouge">' + trollsCode[essais++ % trollsCode.length] + '</span>';
+  }
+}
+$('valider').onclick = verifier;
+$('code').addEventListener('keydown', e => { if (e.key === 'Enter') verifier(); });
+
+/* ---------------- Moteur ---------------- */
+const cv = $('c'), ctx = cv.getContext('2d');
+const T = 16, COLS = 32, LIGNES = 18;
+const VERT = '#5cff96', ROUGE = '#ff4a5a', BLANC = '#c9cad6', GRIS = '#8a8ca0';
+
+function ajusterTaille() {
+  const s = Math.max(1, Math.floor(Math.min(innerWidth / 512, innerHeight / 288) * 2) / 2);
+  cv.style.width = (512 * s) + 'px'; cv.style.height = (288 * s) + 'px';
+}
+addEventListener('resize', ajusterTaille); ajusterTaille();
+
+// Niveaux : # sol, S départ, E sortie, ^ pics, f faux sol (s'effondre), h pics cachés, X fausse sortie, = plateforme
+const NIVEAUX = [
+  { nom: "BIENVENUE", carte: [
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "..S.....................E.......",
+    "################################",
+    "################################",
+    "################################",
+    "################################"],
+    panneaux: [[10, 13, "LA SORTIE EST LÀ →"]],
+    init(n) { n.sortieBouge = false; },
+    maj(n, j) { if (!n.sortieBouge && j.x > 19 * T) { n.sortieBouge = true; n.sortie.x = 2 * T; message("Elle a bougé. Évidemment."); } }
+  },
+  { nom: "LE SOL HONNÊTE", carte: [
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "..S...........................E.",
+    "#####ffffffffffffffffffffff#####",
+    "#####^^^^^^^^^^^^^^^^^^^^^^#####",
+    "################################",
+    "################################"],
+    panneaux: [[6, 13, "CE SOL EST SÛR"], [24, 13, "ARRÊTE-TOI ICI"]],
+    init() {}, maj() {}
+  },
+  { nom: "NE SAUTE PAS", carte: [
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "..S..........................E..",
+    "##########hhh######hhh##########",
+    "################################",
+    "################################",
+    "################################"],
+    panneaux: [[6, 13, "NE SAUTE PAS"], [16, 13, "VRAIMENT."]],
+    init() {}, maj() {}
+  },
+  { nom: "LE MUR AFFAMÉ", carte: [
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "...............====.............",
+    "................................",
+    "................................",
+    ".....S.............X.........E..",
+    "############^^############^^####",
+    "################################",
+    "################################",
+    "################################"],
+    panneaux: [[15, 13, "SORTIE →"]],
+    init(n) { n.mur = -40; },
+    maj(n, j, dt) {
+      if (j.x > 6 * T || n.mur > -40) n.mur += 38 * dt;
+      if (j.x < n.mur) mourir("Le mur avait faim.");
+    },
+    dessin(n) { ctx.fillStyle = '#2a0b14'; ctx.fillRect(0, 0, Math.max(0, n.mur), 288);
+      ctx.fillStyle = ROUGE; for (let y = 0; y < 288; y += 8) ctx.fillRect(n.mur - 4, y + ((y / 8) % 2) * 3, 4, 4); }
+  },
+  { nom: "L'ŒIL", carte: [
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "..S...........................E.",
+    "################################",
+    "################################",
+    "################################",
+    "################################"],
+    panneaux: [[5, 13, "NE BOUGE PAS QUAND IL REGARDE"]],
+    init(n) { n.t = 0; },
+    maj(n, j, dt) {
+      n.t += dt; const cycle = n.t % 4.2;               // 2,6 s fermé, 0,4 s qui s'ouvre, 1,2 s ouvert
+      n.ouvert = cycle > 3.0; n.alerte = cycle > 2.6;
+      if (n.ouvert && Math.abs(j.vx) > 5) mourir("Il t'a vu.");
+    },
+    dessin(n) {
+      const o = n.ouvert ? 1 : (n.alerte ? 0.45 : 0.06);
+      ctx.save(); ctx.globalAlpha = 0.25 + 0.75 * o;
+      ctx.fillStyle = VERT; ctx.beginPath(); ctx.ellipse(256, 70, 90, 34 * o + 2, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#000'; ctx.beginPath(); ctx.ellipse(256, 70, 18 * o + 2, 18 * o + 2, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+  },
+  { nom: "LE DERNIER NIVEAU", carte: [
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................................",
+    "................S...............",
+    "################################",
+    "################################",
+    "################################",
+    "################################"],
+    panneaux: [[22, 13, "IL N'Y A PAS DE SORTIE"]],
+    init(n) { n.sortie = { x: -100, y: -100 }; n.trouve = false; },
+    maj(n, j) {
+      if (j.x < 0) { j.x = 31 * T; if (!n.trouve) { n.trouve = true; n.sortie = { x: 29 * T, y: 13 * T }; message("Le panneau mentait. Comme toujours."); } }
+    }
+  },
+];
+
+const touches = { g: false, d: false, s: false };
+let niveau = 0, morts = lire('zk_morts', 0), n = null, j = null, enJeu = false, msgT = 0, msgTexte = '', fondu = 1;
+
+function message(t) { msgTexte = t; msgT = 2.4; }
+
+function charger(i) {
+  niveau = i; const def = NIVEAUX[i];
+  n = { def, grille: def.carte.map(l => l.split('')), tombe: {}, pics: {} };
+  for (let y = 0; y < LIGNES; y++) for (let x = 0; x < COLS; x++) {
+    const c = n.grille[y][x];
+    if (c === 'S') { n.depart = { x: x * T, y: y * T }; n.grille[y][x] = '.'; }
+    if (c === 'E') { n.sortie = { x: x * T, y: y * T }; n.grille[y][x] = '.'; }
+    if (c === 'X') { n.fausse = { x: x * T, y: y * T }; n.grille[y][x] = '.'; }
+  }
+  def.init(n);
+  j = { x: n.depart.x + 2, y: n.depart.y, vx: 0, vy: 0, sol: false, w: 12, h: 15 };
+  $('hudNiveau').textContent = (i + 1) + '/' + NIVEAUX.length + ' · ' + def.nom;
+  fondu = 1; message(def.nom);
+}
+
+function solide(px, py) {
+  const x = Math.floor(px / T), y = Math.floor(py / T);
+  if (x < 0 || x >= COLS) return niveau === 5 ? false : true;
+  if (y < 0) return false; if (y >= LIGNES) return false;
+  const c = n.grille[y][x];
+  return c === '#' || c === '=' || (c === 'f' && !n.tombe[x + ',' + y]) || c === 'h';
+}
+
+function mourir(raison) {
+  if (!enJeu) return;
+  morts++; sauver('zk_morts', morts);
+  const phrases = [raison, "Recommence. Il adore ça.", "Encore une. Tu en es à " + morts + ".", raison];
+  message(phrases[morts % phrases.length] || raison);
+  const i = niveau; enJeu = false;
+  setTimeout(() => { charger(i); enJeu = true; message(raison); }, 650);
+}
+
+function maj(dt) {
+  const ACC = 900, MAXV = 110, SAUT = 255, G = 720;
+  if (touches.g) j.vx = Math.max(-MAXV, j.vx - ACC * dt);
+  else if (touches.d) j.vx = Math.min(MAXV, j.vx + ACC * dt);
+  else j.vx *= Math.pow(0.0001, dt);
+  if (touches.s && j.sol) { j.vy = -SAUT; j.sol = false; }
+  j.vy = Math.min(420, j.vy + G * dt);
+
+  // horizontal
+  let nx = j.x + j.vx * dt;
+  if (j.vx > 0 && (solide(nx + j.w, j.y + 1) || solide(nx + j.w, j.y + j.h - 1))) { nx = Math.floor((nx + j.w) / T) * T - j.w - 0.01; j.vx = 0; }
+  if (j.vx < 0 && (solide(nx, j.y + 1) || solide(nx, j.y + j.h - 1))) { nx = (Math.floor(nx / T) + 1) * T + 0.01; j.vx = 0; }
+  j.x = nx;
+  // vertical
+  let ny = j.y + j.vy * dt; j.sol = false;
+  if (j.vy > 0 && (solide(j.x + 1, ny + j.h) || solide(j.x + j.w - 1, ny + j.h))) { ny = Math.floor((ny + j.h) / T) * T - j.h; j.vy = 0; j.sol = true; }
+  if (j.vy < 0 && (solide(j.x + 1, ny) || solide(j.x + j.w - 1, ny))) { ny = (Math.floor(ny / T) + 1) * T; j.vy = 0; }
+  j.y = ny;
+
+  // faux sol : s'effondre une fraction de seconde après qu'on marche dessus
+  const sx = Math.floor((j.x + j.w / 2) / T), sy = Math.floor((j.y + j.h + 2) / T);
+  if (sy < LIGNES && n.grille[sy] && n.grille[sy][sx] === 'f' && !n.tombe[sx + ',' + sy]) {
+    const k = sx + ',' + sy, nn = n; setTimeout(() => { nn.tombe[k] = true; }, 330);
+  }
+  // pics cachés : sortent quand on approche (on peut les sauter si on écoute… l'inverse du panneau)
+  for (let y = 0; y < LIGNES; y++) for (let x = 0; x < COLS; x++) if (n.grille[y][x] === 'h') {
+    const d = Math.abs((x * T + 8) - (j.x + j.w / 2));
+    if (d < 34 && !n.pics[x + ',' + y]) n.pics[x + ',' + y] = 0.0001;
+  }
+  for (const k in n.pics) n.pics[k] = Math.min(1, n.pics[k] + dt * 6);
+  // collisions mortelles
+  const pieds = Math.floor((j.y + j.h + 1) / T), cx = Math.floor((j.x + j.w / 2) / T);
+  const sousPied = n.grille[pieds] && n.grille[pieds][cx];
+  for (const [ax, ay] of [[j.x + 2, j.y + j.h - 1], [j.x + j.w - 2, j.y + j.h - 1], [j.x + j.w / 2, j.y + j.h / 2]]) {
+    const gx = Math.floor(ax / T), gy = Math.floor(ay / T);
+    if (n.grille[gy] && n.grille[gy][gx] === '^') { mourir("Les pics étaient vrais, eux."); break; }
+  }
+  if (sousPied === 'h' && (n.pics[cx + ',' + pieds] || 0) > 0.5 && j.sol) mourir("Tu as écouté le panneau.");
+  if (j.y > 288 + 40) mourir("Le sol était sûr. Dans un autre jeu.");
+  if (n.fausse && Math.abs(j.x - n.fausse.x) < 10 && Math.abs(j.y - n.fausse.y) < 12) mourir("Mauvaise sortie.");
+
+  n.def.maj(n, j, dt);
+
+  if (n.sortie && Math.abs(j.x - n.sortie.x) < 10 && Math.abs(j.y - n.sortie.y) < 14 && enJeu) {
+    enJeu = false;
+    if (niveau + 1 < NIVEAUX.length) { message("…ou pas. Si, si : bravo."); setTimeout(() => { charger(niveau + 1); enJeu = true; }, 700); sauver('zk_niveau', niveau + 1); }
+    else terminer();
+  }
+}
+
+/* ---------------- Dessin ---------------- */
+function dessinerZiko(x, y) {
+  ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillRect(x - 1, y + 15, 14, 2);
+  ctx.fillStyle = BLANC; ctx.fillRect(x, y + 1, 12, 9);           // tête
+  ctx.fillStyle = '#12101f'; ctx.fillRect(x + 1, y + 3, 10, 5);   // visière
+  ctx.fillStyle = VERT; ctx.fillRect(x + (j.vx < 0 ? 2 : 6), y + 4, 2, 2); ctx.fillRect(x + (j.vx < 0 ? 5 : 9), y + 4, 2, 2);
+  ctx.fillStyle = GRIS; ctx.fillRect(x + 2, y + 10, 8, 3);        // corps
+  ctx.fillRect(x + 2, y + 13, 3, 2); ctx.fillRect(x + 7, y + 13, 3, 2);
+  ctx.fillStyle = BLANC; ctx.fillRect(x + 8, y - 2, 1, 3); ctx.fillStyle = '#ff5a8c'; ctx.fillRect(x + 7, y - 3, 3, 2);
+}
+
+function porte(x, y, fausse) {
+  ctx.fillStyle = fausse ? '#5a4a8a' : VERT;
+  ctx.globalAlpha = 0.25; ctx.fillRect(x - 4, y - 10, 24, 28); ctx.globalAlpha = 1;
+  ctx.fillRect(x, y - 6, 16, 22); ctx.fillStyle = '#06060e'; ctx.fillRect(x + 3, y - 3, 10, 19);
+}
+
+function panneau(px, py, texte) {
+  ctx.font = 'bold 7px monospace'; const w = ctx.measureText(texte).width + 10;
+  const x = px * T + 8 - w / 2, y = py * T - 8;
+  ctx.fillStyle = '#5a3d26'; ctx.fillRect(px * T + 7, y + 10, 2, 14);
+  ctx.fillStyle = '#8b6240'; ctx.fillRect(x, y, w, 11);
+  ctx.fillStyle = '#f1e6d2'; ctx.textBaseline = 'middle'; ctx.fillText(texte, x + 5, y + 6);
+}
+
+function dessiner(t) {
+  ctx.fillStyle = '#06060e'; ctx.fillRect(0, 0, 512, 288);
+  const g = ctx.createLinearGradient(0, 0, 0, 288); g.addColorStop(0, '#0a0a18'); g.addColorStop(1, '#1c0c26');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 512, 288);
+  // pluie de code discrète
+  ctx.font = '8px monospace'; ctx.fillStyle = 'rgba(92,255,150,.07)';
+  for (let i = 0; i < 40; i++) { const x = (i * 53) % 512, y = ((t * 18 + i * 97) % 300) - 10; ctx.fillText((i * 7 + Math.floor(t)) % 2 ? '1' : '0', x, y); }
+  if (n.def.dessin) n.def.dessin(n);
+  for (let y = 0; y < LIGNES; y++) for (let x = 0; x < COLS; x++) {
+    const c = n.grille[y][x], X = x * T, Y = y * T;
+    if (c === '#' || c === 'h' || (c === 'f' && !n.tombe[x + ',' + y])) {
+      const haut = y > 0 && n.grille[y - 1][x] !== '#';
+      ctx.fillStyle = '#24223a'; ctx.fillRect(X, Y, T, T);
+      ctx.fillStyle = '#2d2b48'; ctx.fillRect(X + 1, Y + 1, T - 2, T - 2);
+      if (haut) { ctx.fillStyle = c === 'f' ? '#4a5a52' : '#3c6e58'; ctx.fillRect(X, Y, T, 2); }
+      if (c === 'f') { ctx.fillStyle = 'rgba(255,255,255,.05)'; ctx.fillRect(X + 5, Y + 6, 1, 4); }
+      if (c === 'h') { // petites fissures : l'indice
+        ctx.fillStyle = 'rgba(255,74,90,.35)'; ctx.fillRect(X + 4, Y + 2, 1, 3); ctx.fillRect(X + 10, Y + 3, 1, 2);
+        const p = n.pics[x + ',' + y] || 0;
+        if (p > 0) { ctx.fillStyle = ROUGE; for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.moveTo(X + k * 5 + 1, Y); ctx.lineTo(X + k * 5 + 3, Y - 9 * p); ctx.lineTo(X + k * 5 + 5, Y); ctx.fill(); } }
+      }
+    } else if (c === '=') { ctx.fillStyle = '#3c6e58'; ctx.fillRect(X, Y, T, 4); ctx.fillStyle = '#24223a'; ctx.fillRect(X, Y + 4, T, 3); }
+    else if (c === '^') { ctx.fillStyle = '#2a0b14'; ctx.fillRect(X, Y, T, T); ctx.fillStyle = ROUGE; for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.moveTo(X + k * 5 + 1, Y + T); ctx.lineTo(X + k * 5 + 3, Y + 4); ctx.lineTo(X + k * 5 + 5, Y + T); ctx.fill(); } }
+  }
+  for (const p of n.def.panneaux) panneau(p[0], p[1], p[2]);
+  if (n.fausse) porte(n.fausse.x, n.fausse.y, false);
+  if (n.sortie && n.sortie.x >= 0) porte(n.sortie.x, n.sortie.y, false);
+  dessinerZiko(Math.round(j.x), Math.round(j.y));
+  // message
+  if (msgT > 0) {
+    ctx.globalAlpha = Math.min(1, msgT * 2, (2.4 - msgT) * 4 + 0.2);
+    ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(0,0,0,.55)'; const w = ctx.measureText(msgTexte).width + 20; ctx.fillRect(256 - w / 2, 108, w, 22);
+    ctx.fillStyle = '#e6e6ee'; ctx.fillText(msgTexte, 256, 119); ctx.textAlign = 'left'; ctx.globalAlpha = 1;
+  }
+  // fondu d'entrée (jamais de flash)
+  if (fondu > 0) { ctx.fillStyle = 'rgba(6,6,14,' + fondu + ')'; ctx.fillRect(0, 0, 512, 288); }
+}
+
+let derniere = 0, temps = 0;
+function boucle(ts) {
+  const dt = Math.min(0.033, (ts - derniere) / 1000 || 0); derniere = ts; temps += dt;
+  if (n) { if (enJeu) maj(dt); msgT = Math.max(0, msgT - dt); fondu = Math.max(0, fondu - dt * 2.5); dessiner(temps); }
+  $('hudMorts').textContent = n ? '💀 ' + morts : '';
+  requestAnimationFrame(boucle);
+}
+
+function demarrer() { charger(Math.min(lire('zk_niveau', 0), NIVEAUX.length - 1)); enJeu = true; }
+
+function terminer() {
+  sauver('zk_niveau', 0);
+  $('finTexte').innerHTML = "Tu es sorti avec <b>" + morts + "</b> morts au compteur.<br>Le Ziko d'avant n'avait pas eu cette chance.<br><br>Garde ce secret. Ou ne le garde pas : personne ne te croira.";
+  $('fin').classList.remove('cache');
+}
+$('rejouer').onclick = () => { $('fin').classList.add('cache'); morts = 0; sauver('zk_morts', 0); charger(0); enJeu = true; };
+
+/* ---------------- Commandes ---------------- */
+const lier = (id, k) => {
+  const el = $(id);
+  const on = e => { e.preventDefault(); touches[k] = true; el.classList.add('on'); };
+  const off = e => { e.preventDefault(); touches[k] = false; el.classList.remove('on'); };
+  el.addEventListener('touchstart', on, { passive: false }); el.addEventListener('touchend', off, { passive: false });
+  el.addEventListener('touchcancel', off, { passive: false });
+  el.addEventListener('mousedown', on); el.addEventListener('mouseup', off); el.addEventListener('mouseleave', off);
+};
+lier('tg', 'g'); lier('td', 'd'); lier('ts', 's');
+addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') return;
+  if (['ArrowLeft', 'q', 'a'].includes(e.key)) touches.g = true; if (['ArrowRight', 'd'].includes(e.key)) touches.d = true;
+  if (['ArrowUp', ' ', 'z', 'w'].includes(e.key)) { touches.s = true; e.preventDefault(); } });
+addEventListener('keyup', e => {
+  if (['ArrowLeft', 'q', 'a'].includes(e.key)) touches.g = false; if (['ArrowRight', 'd'].includes(e.key)) touches.d = false;
+  if (['ArrowUp', ' ', 'z', 'w'].includes(e.key)) touches.s = false; });
+
+/* ---------------- Démarrage ---------------- */
+window.EMPREINTE_ACTIVE = EMPREINTE;
+if (lire('zk_ok', false)) { $('verrou').classList.add('cache'); demarrer(); }
+requestAnimationFrame(boucle);
+
+// Hors-ligne : une fois ouvert une fois, le jeu marche sans internet (et depuis l'écran d'accueil).
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
